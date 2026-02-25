@@ -1,0 +1,163 @@
+<XQ-VOLARIS html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Equipaje - PC</title>
+
+<!-- Html5Qrcode -->
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+body { font-family: Arial; text-align: center; background: #f2f2f2; margin:0; }
+h2 { color: #222; margin-top: 10px; }
+
+#scanner-frame { width: 600px; height: 400px; margin: 20px auto; }
+
+input, button { padding: 10px; margin: 5px; width: 90%; max-width: 300px; }
+button { background: #007bff; color: white; border: none; cursor: pointer; }
+button:hover { background: #0056b3; }
+
+#contador { font-size: 18px; margin-top: 10px; font-weight: bold; }
+#productos { margin-top: 20px; }
+.producto { background: white; padding: 10px; margin: 5px; border-radius: 5px; text-align: left; }
+</style>
+</head>
+
+<body>
+
+
+<h2>🧳 Sistema de Control de Equipaje - PC</h2>
+
+<div id="scanner-frame"></div>
+
+<h3>Código detectado:</h3>
+<div id="codigo">Esperando escaneo...</div>
+
+<input type="text" id="nombre" placeholder="Número de Maleta">
+<input type="number" id="seq" placeholder="SEQ">
+<input type="text" id="buscar" placeholder="Buscar por SEQ o Código" onkeyup="buscarMaleta()">
+
+<br>
+<button onclick="guardarMaleta()">Guardar Maleta</button>
+<button onclick="exportarExcel()">Exportar a Excel</button>
+<button onclick="limpiarInventario()">Borrar Inventario</button>
+
+<div id="contador"></div>
+<div id="productos"></div>
+
+<audio id="beep">
+  <source src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg">
+</audio>
+
+<script>
+let codigoActual = "";
+let inventario = JSON.parse(localStorage.getItem("inventario")) || [];
+
+/* ================== SCANNER ================== */
+function iniciarScanner() {
+  const html5QrCode = new Html5Qrcode("scanner-frame");
+  const config = { fps: 10, qrbox: false, experimentalFeatures: { useBarCodeDetectorIfSupported: true }};
+
+  html5QrCode.start(
+    { facingMode: "environment" },
+    config,
+    (decodedText, decodedResult) => {
+      if (/^[a-zA-Z0-9]{12}$/.test(decodedText)) {
+        codigoActual = decodedText;
+        document.getElementById("codigo").innerText = "✔ Código válido: " + codigoActual;
+        document.getElementById("beep").play();
+      } else {
+        codigoActual = "";
+        document.getElementById("codigo").innerText = "⚠ Código inválido (12 caracteres alfanuméricos)";
+      }
+    },
+    (errorMessage) => {
+      //console.log(errorMessage);
+    }
+  ).catch(err => { console.error("Error iniciando cámara: ", err); });
+}
+
+/* ================== GUARDAR ================== */
+function guardarMaleta() {
+  let nombre = document.getElementById("nombre").value;
+  let seq = document.getElementById("seq").value;
+
+  if (!codigoActual) { alert("Escanea un código válido de 12 caracteres alfanuméricos"); return; }
+  if (!nombre || !seq) { alert("Completa todos los campos"); return; }
+
+  let fecha = new Date().toLocaleString();
+
+  inventario.push({ codigo: codigoActual, maleta: nombre, seq: seq, fecha: fecha });
+  localStorage.setItem("inventario", JSON.stringify(inventario));
+  mostrarInventario();
+  document.getElementById("nombre").value = "";
+  document.getElementById("seq").value = "";
+}
+
+/* ================== MOSTRAR ================== */
+function mostrarInventario(lista = inventario) {
+  let contenedor = document.getElementById("productos");
+  contenedor.innerHTML = "";
+  document.getElementById("contador").innerText = "Total de maletas registradas: " + inventario.length;
+
+  lista.forEach((p) => {
+    contenedor.innerHTML += `
+      <div class="producto">
+        <strong>Maleta:</strong> ${p.maleta}<br>
+        <strong>Código:</strong> ${p.codigo}<br>
+        <strong>SEQ:</strong> ${p.seq}<br>
+        <strong>Fecha:</strong> ${p.fecha}
+      </div>`;
+  });
+}
+
+/* ================== BUSCAR ================== */
+function buscarMaleta() {
+  let texto = document.getElementById("buscar").value.toLowerCase();
+  let filtrado = inventario.filter(p => p.codigo.toLowerCase().includes(texto) || p.seq.toString().includes(texto));
+  mostrarInventario(filtrado);
+}
+
+/* ================== EXPORTAR EXCEL ================== */
+function exportarExcel() {
+  if (inventario.length === 0) { alert("No hay maletas para exportar"); return; }
+
+  let datos = inventario.map(p => ({ Codigo: p.codigo, Numero_Maleta: p.maleta, SEQ: p.seq, Fecha: p.fecha }));
+
+  let hoja = XLSX.utils.json_to_sheet(datos);
+  let libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, hoja, "Equipaje");
+
+  const range = XLSX.utils.decode_range(hoja['!ref']);
+  for (let R = range.s.r; R <= range.e.r; ++R) {
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cell_address = {c:C, r:R};
+      const cell_ref = XLSX.utils.encode_cell(cell_address);
+      if(!hoja[cell_ref]) continue;
+      if(!hoja[cell_ref].s) hoja[cell_ref].s = {};
+      hoja[cell_ref].s.alignment = {horizontal: "left"};
+      hoja[cell_ref].s.border = {
+        top: {style: "thin", color: {rgb:"000000"}},
+        bottom: {style: "thin", color: {rgb:"000000"}},
+        left: {style: "thin", color: {rgb:"000000"}},
+        right: {style: "thin", color: {rgb:"000000"}}
+      };
+    }
+  }
+  hoja['!autofilter'] = { ref: hoja['!ref'] };
+  XLSX.writeFile(libro, "Control_Equipaje.xlsx");
+}
+
+/* ================== LIMPIAR ================== */
+function limpiarInventario() {
+  if (confirm("¿Seguro que quieres borrar todo?")) { inventario = []; localStorage.removeItem("inventario"); mostrarInventario(); }
+}
+
+/* ================== INICIAR SCANNER ================== */
+iniciarScanner();
+mostrarInventario();
+</script>
+</body>
+</html>
